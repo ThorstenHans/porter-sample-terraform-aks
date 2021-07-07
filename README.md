@@ -4,7 +4,7 @@ This repository contains a sample application which is packaged according to [CN
 
 The actual application is a containerized .NET API which is consumed from Docker Hub during application deployment.
 
-Porter is responsible to
+Porter is responsible for:
 
 - Establish authentication with Azure using a service principal (SP)
 - Provision state management backend for [Terraform](https://terraform.io) with Azure CLI
