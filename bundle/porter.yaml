@@ -1,0 +1,183 @@
+name: porter-webinar
+version: 0.1.0
+description: "Porter Webinar Sample"
+registry: getporter
+
+mixins:
+  - exec
+  - terraform:
+      clientVersion: 0.15.4
+  - az
+  - kubernetes
+  - helm3:
+      clientVersion: v3.6.0
+      repositories:
+        k8s-ingress:
+          url: https://kubernetes.github.io/ingress-nginx
+
+parameters:
+  - name: azure_subscription_id
+    type: string
+    env: ARM_SUBSCRIPTION_ID
+  - name: azure_region
+    type: string
+    default: "germanywestcentral"
+  - name: iac_state_resource_group_name
+    type: string
+    default: "rg-thh-porter-webinar-state"
+  - name: iac_state_storage_account_name
+    type: string
+  - name: iac_state_container_name
+    type: string
+    default: "terraform-state"
+credentials:
+  - name: azure_sp_client_id
+    env: ARM_CLIENT_ID
+    applyTo:
+      - "install"
+      - "upgrade"
+      - "uninstall"
+    required: true
+  - name: azure_sp_client_secret
+    env: ARM_CLIENT_SECRET
+    applyTo:
+        - "install"
+        - "upgrade"
+        - "uninstall"
+    required: true
+  - name: azure_tenant_id
+    env: ARM_TENANT_ID
+    applyTo:
+        - "install"
+        - "upgrade"
+        - "uninstall"
+    required: true
+install:
+  - az:
+      description: "Authenticating with Azure"
+      suppress-output: true
+      arguments:
+        - "login"
+      flags:
+        service-principal:
+        allow-no-subscriptions:
+        username: "{{ bundle.credentials.azure_sp_client_id }}"
+        password: "{{ bundle.credentials.azure_sp_client_secret }}"
+        tenant: "{{ bundle.credentials.azure_tenant_id }}"
+  - az:
+      description: "Selecting desired Azure subscription"
+      suppress-output: true
+      arguments:
+        - "account"
+        - "set"
+      flags:
+        subscription: "{{ bundle.parameters.azure_subscription_id }}"
+  - az:
+      description: "Creating Azure Resource Group for IaC"
+      suppress-output: true
+      arguments:
+        - "group"
+        - "create"
+      flags:
+        name: "{{ bundle.parameters.iac_state_resource_group_name }}"
+        location: "{{ bundle.parameters.azure_region }}"
+  - az: 
+      description: "Creating Storage Account for IaC state"
+      suppress-output: true
+      arguments:
+        - "storage"
+        - "account"
+        - "create"
+      flags:
+        name: "{{ bundle.parameters.iac_state_storage_account_name }}"
+        location: "{{ bundle.parameters.azure_region }}"
+        resource-group: "{{ bundle.parameters.iac_state_resource_group_name }}"
+        sku: "Standard_LRS"
+  - az: 
+      description: "Creating Blob Container for IaC state"
+      suppress-output: true
+      arguments:
+        - "storage"
+        - "container"
+        - "create"
+      flags:
+        name: "{{ bundle.parameters.iac_state_container_name }}"
+        account-name: "{{ bundle.parameters.iac_state_storage_account_name }}"
+        public-access: "off"
+  - terraform:
+      description: "Provisioning Azure Kubernetes Service (AKS)"
+      autoApprove: true
+      backendConfig:
+        resource_group_name: "{{ bundle.parameters.iac_state_resource_group_name }}"
+        storage_account_name: "{{ bundle.parameters.iac_state_storage_account_name }}"
+        container_name: "{{ bundle.parameters.iac_state_container_name }}"
+      vars:
+        location: "{{ bundle.parameters.azure_region }}"
+      outputs:
+        - name: aks_name
+        - name: aks_rg_name
+  - az:
+      description: "Downloading Kubernetes credentials"
+      suppress-output: true
+      arguments:
+        - "aks"
+        - "get-credentials"
+      flags:
+        name: "{{ bundle.outputs.aks_name }}"
+        resource-group: "{{ bundle.outputs.aks_rg_name }}" 
+  - kubernetes:
+      description: "Creating Kubernetes namespaces"
+      manifests:
+        - "kubernetes/namespaces.yml"
+      validate: true
+      wait: true
+  - helm3:
+      description: "Installing NGINX Ingress"
+      name: "ingress-{{ installation.name }}"
+      chart: k8s-ingress/ingress-nginx
+      version: "3.31.0"
+      namespace: "ingress"
+      set:
+        controller.admissionWebhooks.enabled: false
+  - helm3:
+      description: "Installing API Chart"
+      namespace: api
+      chart: charts/api
+      version: "1.0.0"
+      name: "{{ installation.name }}"
+uninstall:
+  - az:
+      description: "Authenticate"
+      arguments:
+        - "login"
+      flags:
+        service-principal:
+        allow-no-subscriptions:
+        username: "{{ bundle.credentials.azure_sp_client_id }}"
+        password: "{{ bundle.credentials.azure_sp_client_secret }}"
+        tenant: "{{ bundle.credentials.azure_tenant_id }}"
+  - az:
+      description: "Select Subscription"
+      arguments:
+        - "account"
+        - "set"
+      flags:
+        subscription: "{{ bundle.parameters.azure_subscription_id }}"
+  - terraform:
+      description: "Unprovision Infrastructure"
+      autoApprove: true
+      backendConfig: 
+        resource_group_name: "{{ bundle.parameters.iac_state_resource_group_name }}"
+        storage_account_name: "{{ bundle.parameters.iac_state_storage_account_name }}"
+        container_name: "{{ bundle.parameters.iac_state_container_name }}"
+      vars:
+        location: "{{ bundle.parameters.azure_region }}"
+  - az:
+      description: "Delete Azure Resource Group"
+      arguments:
+        - "group"
+        - "delete"
+      flags:
+        name: "{{ bundle.parameters.iac_state_resource_group_name }}"
+        yes:
+        no-wait:

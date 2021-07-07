@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: api
+  labels:
+    owner: thh
+    com.thinktecture.project: webinar
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress
